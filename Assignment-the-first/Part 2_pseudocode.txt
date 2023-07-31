@@ -5,7 +5,7 @@ Create some line counting variable:
     matched_count = 0
     index_hop_count = 0
     unknown_count = 0
-Store all indexes from indexes.txt in a Store
+Store all indexes from indexes.txt in a set
 Open R1.fq, R2.fq, R3.fq, R4.fq and read line by line:
     While True:
         header = line 1
