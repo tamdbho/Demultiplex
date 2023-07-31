@@ -1,6 +1,7 @@
 Create reverse_complement function:
-    replaces "A" to "T", "T" to "A", "G" to "C", "C" to "G"
     flip the entire string
+    replaces "A" to "T", "T" to "A", "G" to "C", "C" to "G"
+    
 Create some line counting variable:
     matched_count = 0
     index_hop_count = 0
