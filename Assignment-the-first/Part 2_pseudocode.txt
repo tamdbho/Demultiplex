@@ -15,7 +15,7 @@ Open R1.fq, R2.fq, R3.fq, R4.fq and read line by line:
 
         for sequence line in R2.fq and sequence line in R3.fq:
             call reverse_complement function for seq_line_R3
-            if seq_line_R2 or reverserd_seq_line_R3 contains "N" or NOT in index set:
+            if seq_line_R2 or reverserd_seq_line_R3 NOT in index set:
                 write record (header+seq_line_R2+reverserd_seq_line_R3, sequence , + , quality) in R1.fq into unknown_R1.fq
                 write record (header+seq_line_R2+reverserd_seq_line_R3, sequence , + , quality) in R4.fq into unknown_R4.fq
                 unknown_count += 1
