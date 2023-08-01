@@ -19,6 +19,12 @@ Assessing read length:
 2. Per-base NT distribution
     1. Use markdown to insert your 4 histograms here.
 
+![Alt text](Index1.png)
+![Alt text](Index2.png)
+![Alt text](Read1.png)
+![Alt text](Read2.png)
+
+
     2. Setting the quality score cut off at 30 for the reads and indexes. Using the histogram of mean q-score distribution, we observe the lowest mean qscore of approximately 30 for all index and read files. At the base position where Q = 30, setting quality score cut off lower than 30 would allow inclusion of some bad quality nucleotide. However, setting it higher might exclude acceptable nucleotide at these base positions. Setting it at 30 allows proper quality filtering. Additionall Q score of 30 translates to a base call accuracy of 99.9%. For the purpose of Demultiplexing, this quality filtering would allow us to retrieve high quality full sequences. 
 
     3. Number of indexes containing undertermined base call:
