@@ -46,6 +46,17 @@ NATGGCAC
 +
 #AAAFJJ<
 
+Initial data exploration
+zcat /projects/bgmp/shared/2017_sequencing/1294_S1_L008_R1_001.fastq.gz | wc -l
+>> 1452986940
+# That means there are 363246735 records in this file
+# Assume the same for R2, R3, and R4 since it takes really long to run
+
+R1 = read 1
+R2 = index (sequence line)
+R3 = reverse_complement of index 
+R4 = read 2
+
 PART 1
 1. R1 and R4 contain the paired end reads; R2 and R3 contain the index
 2. Length of reads in each file:
@@ -53,6 +64,303 @@ zcat /projects/bgmp/shared/2017_sequencing/<file name> | head -2 | grep -v "^@" 
 R1 and R4 : read length = 101
 R2 and R3 : read length = 8
 
+--------------
+07/31/2023
+--------------
+
+CALCULATE NUMBER OF SEQUENCES WITH AN N IN INDEX FILE (unknown file should have at least this many records)
+zcat /projects/bgmp/shared/2017_sequencing/1294_S1_L008_R2_001.fastq.gz | sed -n 2~4p | grep -E "N" | wc -l
+>> index1 = 3976613
+
+zcat /projects/bgmp/shared/2017_sequencing/1294_S1_L008_R3_001.fastq.gz | sed -n 2~4p | grep -E "N" | wc -l
+>>index2 = 3328051
 
 
+--------------
+08/02/2023
+--------------
 
+Create a reverse complement function and store in bioinfo.py (--now:version 0.5)
+def rev_comp_DNA (DNA:str) -> str:
+    '''Takes in a string of DNA sequence, flip this entire sequence, loop through it and replace each nucleotide with its complement, then return the reverse complemented DNA sequence'''
+    rc_DNA = ""
+    r_DNA = DNA [::-1]
+    for i in range (len(DNA)):
+        rc_DNA += base_subs[r_DNA[i]]
+    return rc_DNA
+This function will be used for R3 files which contained the rc_index 2 and needs to be reversed back to compare to indexes from R2 files
+Another use is that it is a common practive to always present sequences in 5' to 3' direction. 
+I will also be using this convention when attaching the index pairs in header and file name
+
+
+Store all known indexes into a set:
+known_index = set()
+with open("/projects/bgmp/tamho/bioinfo/Bi622/Demultiplex/indexes.txt","r") as file:
+    line = file.readline().strip()
+    for line in file:
+        line = line.split()
+        known_index.add(line[-1])
+this is so that I can separate unknown indexes in the sequencing result
+
+
+Create a function that will store each component of a record as I loop through the file:
+def record_perloop (line) -> tuple:
+    '''To be used while iterating over FASTQ file to temporary store each component of a record in a tuple 
+    - do not do the looping - only saving variables until the next loop'''
+    header = line.readline().strip()
+    sequence = line.readline().strip()
+    comment = line.readline().strip()
+    quality = line.readline().strip()
+    record = (header,sequence,comment,quality)
+    return record
+This is so that I can write 4 lines of code (instead of 16) to get store record from each file every time I loop. 
+Without this function loop through the files will require 16 lines of code to store each component of a record from each file in memory
+That's too long + create confusion later
+Storing in a tuple to make sure the records are ordered (header,seq,comment,qual) and I don't accidentally change something. 
+
+--------------
+08/03/2023
+--------------
+Initiate all folders even before parsing through reads and indexes files. 
+Since I have a set of all known indexes -> the amount of files = number of indexes + 4
+The other 4 files are: unknown (R1+R2) and index-hop (R1+R2)
+
+Strategy:
+1. Create a dictionary = {index: [file handle 1 , file handle 2]}
+2. Create 4 files for unknowns and index-hop
+3. Loop through the index set, grabbing each index and create a file with that index as part of file name (this will be useful for writing later)
+
+write_dict = {}
+
+# Initialize all files needed for writing from the start using open() so it does not autimatically closes. 
+indexhop_R1 = open(f'{output}Index_hopped.R1.fq.out',"w")
+indexhop_R2 = open(f'{output}Index_hopped.R2.fq.out',"w")
+write_dict["index_hop"] = [indexhop_R1, indexhop_R2]
+
+unknown_R1 = open(f'{output}Unknown.R1.fq.out',"w")
+unknown_R2 = open(f'{output}Unknown.R2.fq.out',"w")
+write_dict["unknown"] = [unknown_R1,unknown_R2]
+
+i=0
+for index in known_index:
+    i+=1
+    fh1 = open(f'{output}{index}-{index}.R1.fq.out',"w") 
+    fh2 = open(f'{output}{index}-{index}.R2.fq.out',"w")
+    write_dict[index] = [fh1,fh2]
+
+Why store index + file handles to a dictionary?
+Without this step, I can still open all 52 files but I will not be able to write to them since I can't call on the file handle
+Example: 
+for i in range (1,4,1):
+	file = open(f'{1}',"w)
+	file.write("something")
+this block of code will create 3 files: 1,2,3 but only file 3 will have the line "something" written in it
+Because everytime we go through the loop the file variable is reset 
+
+--------------
+08/07/2023
+--------------
+Create some variables to store counter
+unknown_count = 0 
+index_hop_count = 0
+dual_matched_count = 0
+matched_count = {}  # Create dictionary to report count and percentage of each dual-matched pair
+num_lines = 0
+ihop_pair_count = {}    # Create dictionary to report count and percentage of each index-hopped pair
+
+with gzip.open (read1_file,"rt") as r1, gzip.open(read2_file,"rt") as r2, gzip.open(index1_file,"rt") as i1, gzip.open(index2_file,"rt") as i2:
+# with open (read1_file,"rt") as r1, open(read2_file,"rt") as r2, open(index1_file,"rt") as i1, open(index2_file,"rt") as i2:
+    i = 0
+    while True:
+        record_r1 = record_perloop(r1)
+        record_r2 = record_perloop(r2)
+        record_i1 = record_perloop(i1)
+        record_i2 = record_perloop(i2)
+        # each record is a tuple (header,sequence,comment,quality score)
+        if record_r1 == ("","","",""):
+            break
+        i+=1
+        num_lines += 1
+        rc_i2 = bioinfo.rev_comp_DNA(record_i2[1])
+        if record_i1[1] not in known_index or rc_i2 not in known_index:
+            write_dict["unknown"][0].write(f'{record_r1[0]} - {record_i1[1]}-{rc_i2}\n{record_r1[1]}\n{record_r1[2]}\n{record_r1[3]}\n')
+            write_dict["unknown"][1].write(f'{record_r2[0]} - {record_i1[1]}-{rc_i2}\n{record_r2[1]}\n{record_r2[2]}\n{record_r2[3]}\n')
+            unknown_count += 1
+        else:
+            if record_i1[1] == rc_i2:
+                write_dict[record_i1[1]][0].write(f'{record_r1[0]} - {record_i1[1]}-{rc_i2}\n{record_r1[1]}\n{record_r1[2]}\n{record_r1[3]}\n')
+                write_dict[record_i1[1]][1].write(f'{record_r2[0]} - {record_i1[1]}-{rc_i2}\n{record_r2[1]}\n{record_r2[2]}\n{record_r2[3]}\n')
+                if not matched_count.get(record_i1[1]):
+                    matched_count[record_i1[1]] = 1
+                else:
+                    matched_count[record_i1[1]] += 1
+                dual_matched_count += 1
+            else:
+                write_dict["index_hop"][0].write(f'{record_r1[0]} - {record_i1[1]}-{rc_i2}\n{record_r1[1]}\n{record_r1[2]}\n{record_r1[3]}\n')
+                write_dict["index_hop"][1].write(f'{record_r2[0]} - {record_i1[1]}-{rc_i2}\n{record_r2[1]}\n{record_r2[2]}\n{record_r2[3]}\n')
+                ihop_pair = record_i1[1] + " - " + rc_i2
+                if not ihop_pair_count.get(ihop_pair):
+                    ihop_pair_count[ihop_pair] = 1
+                else:
+                    ihop_pair_count[ihop_pair] += 1
+                index_hop_count += 1
+
+Run it on test file and looks good
+
+--------------
+08/08/2023
+--------------
+
+Write a final report file 
+
+percent_matched = dual_matched_count/num_lines*100
+percent_hop = index_hop_count/num_lines*100
+percent_unknown = unknown_count/num_lines*100
+
+with open (f'{output}Final_Report.tsv',"w") as report:
+    report.write("Input files: \n")
+    report.write(f'{read1_file}\n{read2_file}\n{index1_file}\n{index2_file}\n\n')
+    
+    report.write("SUMMARY\n")
+    report.write (f'Total reads = {num_lines}\n')
+    report.write(f'Total dual-matched count = {dual_matched_count}\tPercent = {percent_matched}\n')
+    report.write (f'Total unknown reads = {unknown_count}\tPercent = {percent_unknown}\n')
+    report.write (f'Total index-hopped reads = {index_hop_count}\tPercent = {percent_hop}\n\n')
+    
+    report.write("Dual-matched pairs:\n")
+    report.write("Index pair\tCount\tPercent\n")
+    for index, count in matched_count.items():
+        percent = count/num_lines*100
+        report.write(f'{index}\t{count}\t{percent}\n')
+    report.write("\n")
+    
+    report.write("Index-hopped pairs:\n")
+    report.write("Index-hopped\tCount\tPercent\n")
+    for ihop, counter in ihop_pair_count.items():
+        ihop_pair_percent = counter/num_lines*100
+        report.write(f'{ihop}\t{counter}\t{ihop_pair_percent}\n')
+
+# Finally close all the read and index files:
+
+for index, fh in write_dict.items():
+    fh[0].close()
+    fh[1].close()
+
+
+ALL /usr/bin/time:
+Command being timed: "./first.py -f /projects/bgmp/shared/2017_sequencing/1294_S1_L008_R3_001.fastq.gz -o R3_index.tsv -u R3_index.png -l 8"
+	User time (seconds): 1114.72
+	System time (seconds): 1.47
+	Percent of CPU this job got: 99%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 18:45.57
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 70184
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 41561
+	Voluntary context switches: 1392
+	Involuntary context switches: 635
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 0
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
+Command being timed: "./first.py -f /projects/bgmp/shared/2017_sequencing/1294_S1_L008_R2_001.fastq.gz -o R2_index.tsv -u R2_index.png -l 8"
+	User time (seconds): 1136.21
+	System time (seconds): 1.38
+	Percent of CPU this job got: 99%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 19:00.35
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 72516
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 44418
+	Voluntary context switches: 185
+	Involuntary context switches: 714
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 0
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
+Command being timed: "./first.py -f /projects/bgmp/shared/2017_sequencing/1294_S1_L008_R1_001.fastq.gz -o R1_bioread.tsv -u R1_bioread.png"
+	User time (seconds): 7826.50
+	System time (seconds): 3.53
+	Percent of CPU this job got: 98%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 2:13:01
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 68432
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 67696
+	Voluntary context switches: 4047
+	Involuntary context switches: 108068
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 0
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
+Command being timed: "./first.py -f /projects/bgmp/shared/2017_sequencing/1294_S1_L008_R4_001.fastq.gz -o R4_bioread.tsv -u R4_bioread.png"
+	User time (seconds): 7322.19
+	System time (seconds): 3.29
+	Percent of CPU this job got: 99%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 2:02:34
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 68984
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 88509
+	Voluntary context switches: 301
+	Involuntary context switches: 2206
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 0
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
+
+Command being timed: "./part_3.py -r1 /projects/bgmp/shared/2017_sequencing/1294_S1_L008_R1_001.fastq.gz -r2 /projects/bgmp/shared/2017_sequencing/1294_S1_L008_R4_001.fastq.gz -i1 /projects/bgmp/shared/2017_sequencing/1294_S1_L008_R2_001.fastq.gz -i2 /projects/bgmp/shared/2017_sequencing/1294_S1_L008_R3_001.fastq.gz -e /projects/bgmp/tamho/bioinfo/Bi622/Demultiplex/indexes.txt -o /projects/bgmp/tamho/bioinfo/Bi622/Demultiplex/Assignment-the-third/test_output_noqc_new/"
+	User time (seconds): 2856.71
+	System time (seconds): 53.18
+	Percent of CPU this job got: 66%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 1:12:30
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 247660
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 10205
+	Voluntary context switches: 73700
+	Involuntary context switches: 832
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 0
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
